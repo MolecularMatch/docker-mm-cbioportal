@@ -36,9 +36,10 @@ RUN yum install -y java-1.7.0-openjdk-devel
 
 # Install Tomcat
 # NOTE: tomcat could be installed by RPM, but its less clear what changes to make compared to a vanilla bin
-RUN curl -L -O http://apache.mirrors.tds.net/tomcat/tomcat-7/v7.0.67/bin/apache-tomcat-7.0.67.tar.gz
-RUN cd /usr/local && tar xfz /root/apache-tomcat-7.0.67.tar.gz 
-RUN ln -s /usr/local/apache-tomcat-7.0.67 /usr/local/tomcat
+# RUN curl -L -O http://apache.mirrors.tds.net/tomcat/tomcat-7/v7.0.67/bin/apache-tomcat-7.0.67.tar.gz
+RUN curl -L -O http://supergsego.com/apache/tomcat/tomcat-7/v7.0.70/bin/apache-tomcat-7.0.70.tar.gz
+RUN cd /usr/local && tar xfz /root/apache-tomcat-7.0.70.tar.gz 
+RUN ln -s /usr/local/apache-tomcat-7.0.70 /usr/local/tomcat
 # This wrapper is not useful outside of a supervisord env
 ADD supervisord_wrapper.sh /usr/local/tomcat/bin/supervisord_wrapper.sh
 RUN chmod +x /usr/local/tomcat/bin/supervisord_wrapper.sh
@@ -106,6 +107,7 @@ RUN cp ~/.m2/repository/mysql/mysql-connector-java/5.1.16/mysql-connector-java-5
 
 ### Load the sample study ###
 
+RUN echo "redo this next step"
 RUN curl -L -O http://cbio.mskcc.org/cancergenomics/public-portal/downloads/brca-example-study.tar.gz
 RUN tar xfz brca-example-study.tar.gz
 ENV CONNECTOR_JAR /usr/local/tomcat/lib/mysql-connector-java-5.1.16.jar
@@ -118,25 +120,40 @@ RUN curl -L -O https://repo.continuum.io/miniconda/Miniconda-latest-Linux-x86_64
 RUN sh Miniconda-latest-Linux-x86_64.sh -b -p /usr/local/miniconda
 ENV PATH /usr/local/miniconda/bin:$PATH
 
+# Need to have MySQL-python for later (db migration)
+RUN yum install -y MySQL-python mysql-libs python-devel
+RUN yum groupinstall -y "Development Tools"
+
+# Update python
+RUN pip install --upgrade pip
+RUN pip install update
+RUN pip install mysql-python
+
+# don't ask for user input when migrating the database
+ADD migrate_db_auto.py $PORTAL_HOME/core/src/main/scripts/migrate_db.py
+
 # Load the brca example data (must start the mysql server for each RUN): 
 # RUN is a separate layer of container, so consider it a fresh boot of a VM. No services run by default. 
 RUN ( cd /usr ; /usr/bin/mysqld_safe & ) \
     && sleep 10 \
     && ( \
+        # migrate the database:
+        python $PORTAL_HOME/core/src/main/scripts/migrate_db.py -p $PORTAL_HOME/src/main/resources/portal.properties -s $PORTAL_HOME/core/src/main/resources/db/migration.sql \
+        && \
         # Load meta-data for the study: 
-        $PORTAL_HOME/core/src/main/scripts/cbioportalImporter.py --jvm-args "-Dspring.profiles.active=dbcp -cp $CONNECTOR_JAR:$CORE_JAR" --command import-study --meta-filename portal-study/meta_study.txt \
+        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study --meta portal-study/meta_study.txt \
         && \
         # Then, load copy number, mutation data and expression data:
-        $PORTAL_HOME/core/src/main/scripts/cbioportalImporter.py --jvm-args "-Dspring.profiles.active=dbcp -cp $CONNECTOR_JAR:$CORE_JAR" --command import-study-data --meta-filename portal-study/meta_CNA.txt --data-filename portal-study/data_CNA.txt \
+        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study-data --meta portal-study/meta_CNA.txt --data portal-study/data_CNA.txt \
         && \
-        $PORTAL_HOME/core/src/main/scripts/cbioportalImporter.py --jvm-args "-Dspring.profiles.active=dbcp -cp $CONNECTOR_JAR:$CORE_JAR" --command import-study-data --meta-filename portal-study/meta_mutations_extended.txt --data-filename portal-study/data_mutations_extended.txt \
+        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study-data --meta portal-study/meta_mutations_extended.txt --data portal-study/data_mutations_extended.txt \
         && \
-        $PORTAL_HOME/core/src/main/scripts/cbioportalImporter.py --jvm-args "-Dspring.profiles.active=dbcp -cp $CONNECTOR_JAR:$CORE_JAR" --command import-study-data --meta-filename portal-study/meta_expression_median.txt --data-filename portal-study/data_expression_median.txt \
+        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study-data --meta portal-study/meta_expression_median.txt --data portal-study/data_expression_median.txt \
         && \
         # Lastly, load the case sets and clinical attributes:
-        $PORTAL_HOME/core/src/main/scripts/cbioportalImporter.py --jvm-args "-Dspring.profiles.active=dbcp -cp $CONNECTOR_JAR:$CORE_JAR" --command import-case-list --meta-filename portal-study/case_lists \
+        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-case-list --meta portal-study/case_lists \
         && \
-        $PORTAL_HOME/core/src/main/scripts/cbioportalImporter.py --jvm-args "-Dspring.profiles.active=dbcp -cp $CONNECTOR_JAR:$CORE_JAR" --command import-study-data --meta-filename portal-study/meta_clinical.txt --data-filename portal-study/data_clinical.txt \
+        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study-data --meta portal-study/meta_clinical.txt --data portal-study/data_clinical.txt \
     ) \
     && mysqladmin shutdown
 
@@ -160,4 +177,6 @@ RUN yum install -y supervisor
 ADD supervisord.conf /etc/supervisord.conf
 RUN mkdir -p /var/log/supervisor
 RUN chmod -R 777 /var/log/supervisor
+CMD systemctl enable mysqld
+CMD systemctl enable tomcat
 CMD ["/usr/bin/supervisord"]
