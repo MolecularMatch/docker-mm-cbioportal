@@ -14,8 +14,6 @@
 
 FROM centos:6
 
-MAINTAINER Evan F. Bollig, boll0107@umn.edu
-
 WORKDIR /root
 
 #### BASE OS ####
@@ -36,7 +34,6 @@ RUN yum install -y java-1.7.0-openjdk-devel
 
 # Install Tomcat
 # NOTE: tomcat could be installed by RPM, but its less clear what changes to make compared to a vanilla bin
-# RUN curl -L -O http://apache.mirrors.tds.net/tomcat/tomcat-7/v7.0.67/bin/apache-tomcat-7.0.67.tar.gz
 RUN curl -L -O http://supergsego.com/apache/tomcat/tomcat-7/v7.0.70/bin/apache-tomcat-7.0.70.tar.gz
 RUN cd /usr/local && tar xfz /root/apache-tomcat-7.0.70.tar.gz 
 RUN ln -s /usr/local/apache-tomcat-7.0.70 /usr/local/tomcat
@@ -52,14 +49,10 @@ RUN curl -L -O http://supergsego.com/apache/maven/maven-3/3.3.9/binaries/apache-
 RUN cd /usr/local && tar xzf /root/apache-maven-3.3.9-bin.tar.gz
 RUN ln -s /usr/local/apache-maven-3.3.9 /usr/local/maven
 
-#### SOFTWARE DEPENDENCIES ####
-
+# Install cbioportal
 RUN git clone https://github.com/cBioPortal/cbioportal.git
-
-# NOTE: not sure if any of this data is actually necessary, but I'm pre-loading it into mysql
+# pre-load data into mysql; this increases the size of the container to ~ 10GB
 RUN curl -L -O http://cbio.mskcc.org/cancergenomics/public-portal/downloads/cbioportal-seed.sql.gz
-
-## FROM https://github.com/cBioPortal/cbioportal/wiki/Pre-Build-Steps
 
 WORKDIR /root/cbioportal
 
@@ -96,7 +89,7 @@ ENV PORTAL_HOME /root/cbioportal
 
 WORKDIR /root/cbioportal
 
-### Install cbioportal ###
+# Install maven and tomcat and jdbc
 
 # NOTE: cbioportal requires java >=1.7.0, maven requires <=1.7.0
 RUN /usr/local/maven/bin/mvn -DskipTests clean install
@@ -105,9 +98,7 @@ RUN cp $PORTAL_HOME/portal/target/cbioportal.war /usr/local/tomcat/webapps/cbiop
 # This is the JDBC driver needed by cbioportal (downloaded during clean install)
 RUN cp ~/.m2/repository/mysql/mysql-connector-java/5.1.16/mysql-connector-java-5.1.16.jar /usr/local/tomcat/lib/.
 
-### Load the sample study ###
-
-RUN echo "redo this next step"
+# Load the sample study
 RUN curl -L -O http://cbio.mskcc.org/cancergenomics/public-portal/downloads/brca-example-study.tar.gz
 RUN tar xfz brca-example-study.tar.gz
 ENV CONNECTOR_JAR /usr/local/tomcat/lib/mysql-connector-java-5.1.16.jar
@@ -130,6 +121,7 @@ RUN pip install update
 RUN pip install mysql-python
 
 # don't ask for user input when migrating the database
+# this is terribly brittle and may break with updates to cbioportal
 ADD migrate_db_auto.py $PORTAL_HOME/core/src/main/scripts/migrate_db.py
 
 # Load the brca example data (must start the mysql server for each RUN): 
@@ -140,6 +132,7 @@ RUN ( cd /usr ; /usr/bin/mysqld_safe & ) \
         # migrate the database:
         python $PORTAL_HOME/core/src/main/scripts/migrate_db.py -p $PORTAL_HOME/src/main/resources/portal.properties -s $PORTAL_HOME/core/src/main/resources/db/migration.sql \
         && \
+        # the following commands aren't working properly -- see error messages
         # Load meta-data for the study: 
         $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study --meta portal-study/meta_study.txt \
         && \
@@ -156,12 +149,6 @@ RUN ( cd /usr ; /usr/bin/mysqld_safe & ) \
         $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study-data --meta portal-study/meta_clinical.txt --data portal-study/data_clinical.txt \
     ) \
     && mysqladmin shutdown
-
-# TODO: is this needed?  
-#RUN curl -L -O http://cbio.mskcc.org/cancergenomics/public-portal/downloads/MAF_example.txt
-
-#### DOCKER SPECIFIC SETUP ######
-# There will be no need for this stuff when building a production VM. 
 
 # Dummy entrypoint does not add pro- or epi-log tasks 
 ADD entrypoint.sh /entrypoint.sh
