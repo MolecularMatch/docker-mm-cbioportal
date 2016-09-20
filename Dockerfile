@@ -132,21 +132,11 @@ RUN ( cd /usr ; /usr/bin/mysqld_safe & ) \
         # migrate the database:
         python $PORTAL_HOME/core/src/main/scripts/migrate_db.py -p $PORTAL_HOME/src/main/resources/portal.properties -s $PORTAL_HOME/core/src/main/resources/db/migration.sql \
         && \
-        # the following commands aren't working properly -- see error messages
-        # Load meta-data for the study: 
-        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study --meta portal-study/meta_study.txt \
+        # Validate meta-data for a small test study: 
+        $PORTAL_HOME/core/src/main/scripts/importer/validateData.py -s $PORTAL_HOME/core/src/test/scripts/test_data/study_es_0/ -n \
         && \
-        # Then, load copy number, mutation data and expression data:
-        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study-data --meta portal-study/meta_CNA.txt --data portal-study/data_CNA.txt \
-        && \
-        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study-data --meta portal-study/meta_mutations_extended.txt --data portal-study/data_mutations_extended.txt \
-        && \
-        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study-data --meta portal-study/meta_expression_median.txt --data portal-study/data_expression_median.txt \
-        && \
-        # Lastly, load the case sets and clinical attributes:
-        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-case-list --meta portal-study/case_lists \
-        && \
-        $PORTAL_HOME/core/src/main/scripts/importer/cbioportalImporter.py --command import-study-data --meta portal-study/meta_clinical.txt --data portal-study/data_clinical.txt \
+        # Then, load data:
+        $PORTAL_HOME/core/src/main/scripts/importer/metaImport.py -s $PORTAL_HOME/core/src/test/scripts/test_data/study_es_0/ -n -o \
     ) \
     && mysqladmin shutdown
 
